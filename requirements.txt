@@ -1,0 +1,4 @@
+textual[syntax]
+psycopg
+sqlparse
+requests
