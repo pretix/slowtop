@@ -21,7 +21,11 @@ from textual.containers import Grid
 from textual.widgets import DataTable, Footer, Header, TextArea
 from textual.widgets.data_table import ColumnKey
 
-from config import API_URL, EXTRA_FIELDS, LOCALE, LOG_DIR, PG_CONNINFO
+try:
+    from config import API_URL, EXTRA_FIELDS, LOCALE, LOG_DIR, PG_CONNINFO
+except ImportError:
+    print("Error: config.py not found. Please create it based on config.py.example.")
+    sys.exit(1)
 
 locale.setlocale(locale.LC_ALL, LOCALE)
 
