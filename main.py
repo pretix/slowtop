@@ -419,7 +419,13 @@ class SlowQueryApp(App[None]):
         yield Header()
         with Grid(id="layout"):
             yield DataTable(id="table")
-            yield TextArea.code_editor("", id="details", read_only=True, language="sql")
+            yield TextArea.code_editor(
+                "",
+                id="details",
+                read_only=True,
+                highlight_cursor_line=False,
+                language="sql",
+            )
         yield Footer(compact=True)
 
     def get_selected_query(self) -> SlowQuery | QueryGroup | None:
