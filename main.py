@@ -86,21 +86,12 @@ COLUMNS_PLAIN = [
 COLUMNS_PLAIN += EXTRA_FIELDS
 COLUMNS_GROUPED = [
     {"name": "Count", "key": "count", "justify": "right"},
-    {"name": "Avg \\[ms]", "key": "avg_runtime", "justify": "right"},
-    {"name": "Max \\[ms]", "key": "max_runtime", "justify": "right"},
-    {"name": "Total \\[ms]", "key": "total_runtime", "justify": "right"},
-    {"name": "QueryId", "key": "query_id", "justify": "left"},
-    {"name": "SQL", "key": "sql", "justify": "left"},
-]
-for field in EXTRA_FIELDS:
-    field = field.copy()
-    if field["aggregation"] == "count":
-        field["name"] = f"# {field['name']}"
-    elif field["aggregation"] == "sample":
-        field["name"] = f"Sample {field['name']}"
-    elif field["aggregation"] == "list":
-        field["name"] = field["name"]
-    COLUMNS_GROUPED.append(field)
+    {"name": "Avg [ms]", "key": "avg_runtime", "justify": "right"},
+    {"name": "Max [ms]", "key": "max_runtime", "justify": "right"},
+    {"name": "Total [ms]", "key": "total_runtime", "justify": "right"},
+    {"name": "QueryId", "key": "query_id", "justify": "left", "aggregation": "count"},
+    {"name": "SQL", "key": "sql", "justify": "left", "aggregation": "sample"},
+] + EXTRA_FIELDS
 
 
 def osc52_copy(text: str, driver=sys.stdout) -> None:
@@ -240,38 +231,52 @@ def find_latest_log() -> Path:
     return files[0]
 
 
+def aggregate(set_: set, aggregation_mode: str) -> int | str:
+    if aggregation_mode == "count":
+        return len({e for e in set_ if e != "-"})
+    elif aggregation_mode == "sample":
+        return next(iter(set_), "-")
+    elif aggregation_mode == "list":
+        return ", ".join(sorted(set_))
+    else:
+        raise ValueError(f"Unknown aggregation type: {aggregation_mode}")
+
+
 def group_queries(
     queries: list[SlowQuery],
+    group_by: str = "query_id",
 ) -> list[QueryGroup]:
     groups: dict[str, list[SlowQuery]] = defaultdict(list)
 
     for query in queries:
-        groups[query.query_id].append(query)
+        if group_by == "query_id":
+            groups[query.query_id].append(query)
+        else:
+            groups[query.extra_fields[group_by]].append(query)
 
     result: list[QueryGroup] = []
 
-    for query_id, items in groups.items():
+    for group, items in groups.items():
         runtimes = [q.runtime_ms for q in items]
 
-        # Aggregate extra fields for the group
+        # Aggregate fields
         extra_fields = {}
-        for field in EXTRA_FIELDS:
-            if field["aggregation"] == "count":
-                extra_fields[field["key"]] = len(
-                    {
-                        q.extra_fields.get(field["key"])
-                        for q in items
-                        if q.extra_fields.get(field["key"], "-") != "-"
-                    }
+        for extra_field in EXTRA_FIELDS:
+            if group_by == extra_field["key"]:
+                extra_fields[extra_field["key"]] = group
+            else:
+                aggregation_mode = extra_field.get("aggregation", "count")
+                key = extra_field["key"]
+                extra_fields[extra_field["key"]] = str(
+                    aggregate(
+                        {q.extra_fields.get(key, "-") for q in items}, aggregation_mode
+                    )
                 )
-            if field["aggregation"] == "sample":
-                extra_fields[field["key"]] = items[0].extra_fields.get(
-                    field["key"], "-"
-                )
-            if field["aggregation"] == "list":
-                extra_fields[field["key"]] = ", ".join(
-                    sorted({q.extra_fields.get(field["key"], "-") for q in items})
-                )
+
+        if group_by == "query_id":
+            query_id = group
+        else:
+            query_id = str(aggregate({q.query_id for q in items}, "count"))
 
         result.append(
             QueryGroup(
@@ -360,7 +365,7 @@ class SlowQueryApp(App[None]):
         ("A", "explain_analyze", "Run and Analyse"),
         ("+", "increase_details", "Increase Detail View"),
         ("-", "decrease_details", "Decrease Detail View"),
-        ("g", "toggle_grouped", "Grouped by QueryId"),
+        ("g", "toggle_grouping", "Toggle grouping"),
         ("s", "switch_sort_column", "Switch Sort Column"),
         ("r", "toggle_sort_reverse", "Toggle Sort Order"),
         ("c", "copy_query", "Copy Query to Clipboard"),
@@ -369,13 +374,22 @@ class SlowQueryApp(App[None]):
     def __init__(
         self,
         queries: list[SlowQuery],
-        grouped_queries: Optional[list[QueryGroup]] = None,
-        grouped=False,
+        grouped_queries: Optional[dict[str, list[QueryGroup]]] = None,
+        grouped_by=None,
     ) -> None:
         super().__init__()
         self.queries = queries
-        self.grouped = grouped
-        self.grouped_queries = grouped_queries
+        self.grouped_by = grouped_by
+        if grouped_queries:
+            self.grouped_queries = grouped_queries
+        else:
+            self.grouped_queries = {}
+        # If using pg_stat_statements the queries are always grouped by query_id
+        if queries == [] and grouped_by is not None:
+            self.available_groupings: list[str | None] = ["query_id"]
+        else:
+            self.available_groupings = [None, "query_id"]
+            self.available_groupings += [field["key"] for field in EXTRA_FIELDS]
         self.sort_column = -1
         self.sort_reverse = True
         self.selected_row = 0
@@ -391,9 +405,12 @@ class SlowQueryApp(App[None]):
         table = self.query_one(DataTable)
         if table.cursor_row < 0:
             return None
-        if self.grouped:
-            return self.grouped_queries[self.selected_row]
-        return self.queries[self.selected_row]
+        try:
+            if self.grouped_by:
+                return self.grouped_queries[self.grouped_by][self.selected_row]
+            return self.queries[self.selected_row]
+        except IndexError:
+            return None
 
     def on_data_table_row_highlighted(
         self,
@@ -408,24 +425,23 @@ class SlowQueryApp(App[None]):
         self.update_details()
 
     def update_details(self) -> None:
-        if self.grouped:
-            query = self.grouped_queries[self.selected_row]
-        else:
-            query = self.queries[self.selected_row]
+        query = self.get_selected_query()
+        if query is None:
+            return
         details = self.query_one("#details", TextArea)
         details.load_text(format_sql(query.sql) + "\n\n" + query.plan)
 
     def update_sort(self) -> None:
         table = self.query_one(DataTable)
         if self.sort_column >= 0:
-            sort_col_key = self.columns[self.sort_column]["key"]
-            sort_col_str = self.columns[self.sort_column]["name"]
+            sort_col_key = ColumnKey(self.columns[self.sort_column]["key"])
+            sort_col_str = self.columns[self.sort_column]["display_name"]
             for col in self.columns:
-                key = col["key"]
-                name = col["name"]
-                table.columns[key].label = name
-            table.columns[sort_col_key].label = sort_col_str + (
-                " ▼" if self.sort_reverse else " ▲"
+                key = ColumnKey(col["key"])
+                name = col["display_name"]
+                table.columns[key].label = Text(name)
+            table.columns[sort_col_key].label = Text(
+                sort_col_str + (" ▼" if self.sort_reverse else " ▲")
             )
 
             def natural_sort(input):
@@ -505,8 +521,13 @@ class SlowQueryApp(App[None]):
                 severity="error",
             )
 
-    def action_toggle_grouped(self) -> None:
-        self.grouped = not self.grouped
+    def action_toggle_grouping(self) -> None:
+        self.grouped_by = self.available_groupings[
+            (self.available_groupings.index(self.grouped_by) + 1)
+            % len(self.available_groupings)
+        ]
+        self.clear_notifications()
+        self.notify(f"Grouped by: {self.grouped_by}")
         table = self.query_one(DataTable)
         table.clear(columns=True)
         self.on_mount()
@@ -517,15 +538,28 @@ class SlowQueryApp(App[None]):
         table.cursor_type = "row"
         table.zebra_stripes = True
 
-        if self.grouped:
-            if self.grouped_queries is None:
-                self.grouped_queries = group_queries(self.queries)
+        if self.grouped_by:
+            if self.grouped_by not in self.grouped_queries:
+                self.grouped_queries[self.grouped_by] = group_queries(
+                    self.queries, self.grouped_by
+                )
             self.columns = COLUMNS_GROUPED
-            # Hack: Add extra spaces to the column names to make sure there is
-            # enough space for the sort indicators
-            table.add_columns(*[(c["name"] + "  ", c["key"]) for c in COLUMNS_GROUPED])
+            for c in COLUMNS_GROUPED:
+                key = c["key"]
+                if key != self.grouped_by and c.get("aggregation") == "count":
+                    name = "# " + c["name"]
+                elif key != self.grouped_by and c.get("aggregation") == "sample":
+                    name = "Sample " + c["name"]
+                else:
+                    name = c["name"]
+                c["display_name"] = name
+                # Hack: Add two spaces to the end of the name to make sure the
+                # column is wide enough for the sort indicator (▼ or ▲)
+                name_ = name + "  "
+                table.add_column(Text(name_), key=c["key"])
+                table.columns[ColumnKey(c["key"])].label = Text(name)
 
-            for index, group in enumerate(self.grouped_queries):
+            for index, group in enumerate(self.grouped_queries[self.grouped_by]):
                 table.add_row(
                     Number(group.count),
                     Number(group.avg_runtime_ms),
@@ -542,7 +576,13 @@ class SlowQueryApp(App[None]):
 
         else:
             self.columns = COLUMNS_PLAIN
-            table.add_columns(*[(c["name"] + "  ", c["key"]) for c in COLUMNS_PLAIN])
+            for c in COLUMNS_PLAIN:
+                c["display_name"] = c["name"]
+                # Hack: Add two spaces to the end of the name to make sure the
+                # column is wide enough for the sort indicator (▼ or ▲)
+                name_ = c["name"] + "  "
+                table.add_column(Text(name_), key=c["key"])
+                table.columns[ColumnKey(c["key"])].label = Text(c["name"])
 
             for index, query in enumerate(self.queries):
                 table.add_row(
@@ -567,6 +607,21 @@ class SlowQueryApp(App[None]):
         grid = self.query_one("#layout")
         self.details_height -= 1
         grid.styles.grid_rows = "1fr " + str(self.details_height)
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool:
+        """Disable keybindings that won't work anyway."""
+        if action in ["explain", "explain_analyze", "copy_query"]:
+            query = self.get_selected_query()
+            if query is None:
+                return False
+        if action == "explain":
+            query = self.get_selected_query()
+            if not isinstance(query, SlowQuery) or query.plan:
+                return False
+        if action == "toggle_grouping":
+            if len(self.available_groupings) <= 1:
+                return False
+        return True
 
 
 def main() -> None:
@@ -607,11 +662,16 @@ def main() -> None:
 
     if args.stat_statements:
         grouped_queries = get_pg_stat_statements()
-        app = SlowQueryApp(queries=[], grouped_queries=grouped_queries, grouped=True)
+        app = SlowQueryApp(
+            queries=[],
+            grouped_queries={"query_id": grouped_queries},
+            grouped_by="query_id",
+        )
     else:
         logfiles = args.logfiles or [find_latest_log()]
         queries = parse_log_files(logfiles)
-        app = SlowQueryApp(queries, grouped=args.grouped)
+        group_by = "query_id" if args.grouped else None
+        app = SlowQueryApp(queries, grouped_by=group_by)
 
     app.run()
 
