@@ -9,13 +9,14 @@ import re
 import sys
 from collections import defaultdict
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Literal, Optional, Tuple
 
+import pglast
 import psycopg
 import requests
 import rich.text
-import sqlparse
 from textual.app import App, ComposeResult
 from textual.containers import Grid
 from textual.widgets import DataTable, Footer, Header, TextArea
@@ -161,15 +162,32 @@ def send_for_analysis(query: SlowQuery | QueryGroup) -> Tuple[str, str]:
     return (url, delete_url)
 
 
-def format_sql(sql: str) -> str:
+@lru_cache
+def format_sql(sql: str, inline=False) -> str:
+    # Huge queries can cause pglast or textual to freeze, so we limit the size
+    # of the query to 10000 characters
+    shortened = False
+    tmp = re.sub(r"\([0-9, ]{1000,}\)", '("<...>")', sql)
+    if tmp != sql:
+        shortened = True
+        sql = tmp
+    if len(sql) > 100000:
+        return sql[:100000]
+    preserve_comments = not inline
     try:
-        return sqlparse.format(
+        pretty = pglast.prettify(
             sql,
-            reindent=True,
-            keyword_case="upper",
-            strip_comments=False,
+            comma_at_eoln=True,
+            semicolon_after_last_statement=True,
+            preserve_comments=preserve_comments,
         )
-    except sqlparse.exceptions.SQLParseError:
+        if inline:
+            return " ".join(pretty.split())
+        elif shortened:
+            return "/* WARNING: Query shortened due to extreme length */\n" + pretty
+        else:
+            return pretty
+    except pglast.Error:
         return sql
 
 
@@ -568,8 +586,8 @@ class SlowQueryApp(App[None]):
                     Number(group.avg_runtime_ms),
                     Number(group.max_runtime_ms),
                     Number(group.total_runtime_ms),
-                    Text(group.query_id),
-                    Text(shorten_str(group.sql)),
+                    Text(str(group.query_id)),
+                    Text(shorten_str(format_sql(group.sql, inline=True))),
                     *[
                         Text(str(group.extra_fields.get(field["key"], "-")))
                         for field in EXTRA_FIELDS
@@ -592,7 +610,7 @@ class SlowQueryApp(App[None]):
                     Text(query.time),
                     Number(query.runtime_ms),
                     Text(query.ps),
-                    Text(shorten_str(query.sql)),
+                    Text(shorten_str(format_sql((query.sql), inline=True))),
                     Text(query.query_id),
                     *[
                         Text(query.extra_fields.get(field["key"], "-"))

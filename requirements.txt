@@ -1,4 +1,4 @@
 textual[syntax]
 psycopg
-sqlparse
+pglast
 requests
