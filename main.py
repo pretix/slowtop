@@ -214,7 +214,10 @@ def extract_plan(message: str) -> str:
 def extract_regex(regex: re.Pattern, sql: str) -> str:
     match = regex.search(sql)
     if match:
-        return match.group(1)
+        # Return first capturing group that is not None
+        for group in match.groups():
+            if group is not None:
+                return group
     return "-"
 
 
