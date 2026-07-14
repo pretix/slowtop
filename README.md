@@ -16,5 +16,5 @@ Dependencies:
 * PostgreSQL with logs in JSON-Format and/or pg_stat_statements enabled
 * textual
 * psycopg
-* sqlparse
+* pglast
 * requests
