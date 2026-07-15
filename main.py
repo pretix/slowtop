@@ -408,10 +408,11 @@ class SlowQueryApp(App[None]):
         # If using pg_stat_statements the queries are always grouped by query_id
         if queries == [] and grouped_by is not None:
             self.available_groupings: list[str | None] = ["query_id"]
+            self.sort_column = 3
         else:
             self.available_groupings = [None, "query_id"]
             self.available_groupings += [field["key"] for field in EXTRA_FIELDS]
-        self.sort_column = -1
+            self.sort_column = -1
         self.sort_reverse = True
         self.selected_row = 0
 
@@ -624,6 +625,7 @@ class SlowQueryApp(App[None]):
                     ],
                     key=str(index),
                 )
+        self.update_sort()
 
     def action_increase_details(self) -> None:
         grid = self.query_one("#layout")
