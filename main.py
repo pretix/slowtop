@@ -18,8 +18,11 @@ import psycopg
 import requests
 import rich.text
 from textual.app import App, ComposeResult
-from textual.containers import Grid
-from textual.widgets import DataTable, Footer, Header, TextArea
+from textual.containers import Grid, Vertical
+from textual.screen import Screen
+from textual.widgets import (Button, Checkbox, DataTable, Footer, Header,
+                             Input, Label, RadioButton, RadioSet, Select,
+                             TextArea)
 from textual.widgets.data_table import ColumnKey
 
 try:
@@ -99,6 +102,21 @@ def osc52_copy(text: str, driver=sys.stdout) -> None:
     encoded = base64.b64encode(text.encode("utf-8")).decode("ascii")
     driver.write(f"\033]52;c;{encoded}\a")
     driver.flush()
+
+
+def filter_text(text: str, filter_str: str, filter_mode: str, inverse: bool):
+    if filter_mode == "exact":
+        if filter_str != text:
+            return not inverse
+    elif filter_mode == "substring":
+        if filter_str not in text:
+            return not inverse
+    elif filter_mode == "regex":
+        if not re.search(filter_str, text):
+            return not inverse
+    else:
+        raise ValueError(f"Invalid filter_mode: {filter_mode}")
+    return inverse
 
 
 def run_explain_analyze(sql: str) -> str:
@@ -364,6 +382,85 @@ def parse_log_files(paths: list[Path]) -> list[SlowQuery]:
     return result
 
 
+class FilterScreen(Screen):
+    """Dialog for selecting a filter."""
+
+    CSS = """
+    #dialog {
+        width: 60;
+        height: 21;
+        border: round $accent;
+    }
+    FilterScreen {
+        background: $surface 90%;
+        align: center middle;
+        content-align: center middle;
+    }
+
+    #title {
+        text-style: bold;
+    }
+
+    RadioSet {
+        height: auto;
+    }
+
+    Input {
+        width: 100%;
+    }
+
+    Button {
+        width: 100%;
+    }
+    """
+
+    def __init__(self, column_list: list[str]):
+        super().__init__()
+        self.column_list = column_list
+        self.radio_buttons = []
+        self.modes = [
+            RadioButton("substring", value=True),
+            RadioButton("exact"),
+            RadioButton("regex"),
+        ]
+
+    def compose(self) -> ComposeResult:
+        yield Vertical(
+            Label("Filter Table", id="title"),
+            Select.from_values(self.column_list, id="column", value="sql"),
+            Input(
+                placeholder="Type filter text…",
+                id="filter",
+            ),
+            RadioSet(*self.modes, id="mode"),
+            Checkbox("Inverse", id="inverse"),
+            Button("Apply Filter", variant="primary", id="apply"),
+            id="dialog",
+        )
+
+    def on_mount(self) -> None:
+        self.query_one("#filter", Input).focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        self.apply_filter()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.apply_filter()
+
+    def apply_filter(self) -> None:
+        column = self.query_one("#column")
+        input_widget = self.query_one("#filter")
+        mode = self.query_one("#mode")
+        inverse = self.query_one("#inverse")
+
+        self.app.filter(
+            column=column.value,
+            filter_str=input_widget.value,
+            filter_mode=mode.pressed_button.label.plain,
+            inverse=inverse.value,
+        )
+
+
 class SlowQueryApp(App[None]):
     details_height = 15
     CSS = """
@@ -390,6 +487,7 @@ class SlowQueryApp(App[None]):
         ("s", "switch_sort_column", "Switch Sort Column"),
         ("r", "toggle_sort_reverse", "Toggle Sort Order"),
         ("c", "copy_query", "Copy Query to Clipboard"),
+        ("f", "filter", "Filter"),
     ]
 
     def __init__(
@@ -415,6 +513,7 @@ class SlowQueryApp(App[None]):
             self.sort_column = -1
         self.sort_reverse = True
         self.selected_row = 0
+        self.filtered = False
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -491,6 +590,32 @@ class SlowQueryApp(App[None]):
             cell_key = table.coordinate_to_cell_key(table.cursor_coordinate)
             self.selected_row = int(cell_key[0].value or 0)
             self.update_details()
+
+    def action_filter(self) -> None:
+        self.push_screen(FilterScreen([c["key"] for c in self.columns]))
+
+    def filter(
+        self, column: str, filter_str: str, filter_mode: str, inverse: bool
+    ) -> None:
+        table = self.query_one(DataTable)
+        # If it was already filtered, we first recreate the original
+        if self.filter:
+            table.clear(columns=True)
+            self.on_mount()
+        to_remove = []
+        for row_key, row in table.rows.items():
+            value = table.get_cell(row_key, column).plain
+            if filter_text(
+                value,
+                filter_str=filter_str,
+                filter_mode=filter_mode,
+                inverse=inverse,
+            ):
+                to_remove.append(row_key)
+        for row_key in to_remove:
+            table.remove_row(row_key)
+        self.pop_screen()
+        self.filtered = True
 
     def action_copy_query(self) -> None:
         query = self.get_selected_query()
