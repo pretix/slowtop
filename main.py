@@ -573,6 +573,13 @@ class SlowQueryApp(App[None]):
         table.cursor_type = "row"
         table.zebra_stripes = True
         width_sql_column = self.viewport_size[0] - 100 - 20 * len(EXTRA_FIELDS)
+        # Handle small terminals
+        if self.viewport_size[1] < 25:
+            layout = self.query_one("#layout")
+            layout.styles.grid_rows = (
+                layout.styles.grid_rows[0],
+                5,
+            )
 
         if self.grouped_by:
             if self.grouped_by not in self.grouped_queries:
