@@ -572,6 +572,7 @@ class SlowQueryApp(App[None]):
 
         table.cursor_type = "row"
         table.zebra_stripes = True
+        width_sql_column = self.viewport_size[0] - 100 - 20 * len(EXTRA_FIELDS)
 
         if self.grouped_by:
             if self.grouped_by not in self.grouped_queries:
@@ -601,7 +602,12 @@ class SlowQueryApp(App[None]):
                     Number(group.max_runtime_ms),
                     Number(group.total_runtime_ms),
                     Text(str(group.query_id)),
-                    Text(shorten_str(format_sql(group.sql, inline=True))),
+                    Text(
+                        shorten_str(
+                            format_sql(group.sql, inline=True),
+                            max_length=width_sql_column,
+                        )
+                    ),
                     *[
                         Text(str(group.extra_fields.get(field["key"], "-")))
                         for field in EXTRA_FIELDS
@@ -624,7 +630,12 @@ class SlowQueryApp(App[None]):
                     Text(query.time),
                     Number(query.runtime_ms),
                     Text(query.ps),
-                    Text(shorten_str(format_sql((query.sql), inline=True))),
+                    Text(
+                        shorten_str(
+                            format_sql((query.sql), inline=True),
+                            max_length=width_sql_column,
+                        )
+                    ),
                     Text(query.query_id),
                     *[
                         Text(query.extra_fields.get(field["key"], "-"))
