@@ -452,6 +452,13 @@ class SlowQueryApp(App[None]):
             raise ValueError("Row key invalid")
         self.update_details()
 
+    def on_data_table_header_selected(self, event: DataTable.HeaderSelected) -> None:
+        if self.sort_column == event.column_index:
+            self.sort_reverse = not self.sort_reverse
+        else:
+            self.sort_column = event.column_index
+        self.update_sort()
+
     def update_details(self) -> None:
         query = self.get_selected_query()
         if query is None:
