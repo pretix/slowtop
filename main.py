@@ -670,7 +670,7 @@ class SlowQueryApp(App[None]):
                 return False
         if action == "explain":
             query = self.get_selected_query()
-            if not isinstance(query, SlowQuery) or query.plan:
+            if not isinstance(query, SlowQuery) or not query.plan:
                 return False
         if action == "toggle_grouping":
             if len(self.available_groupings) <= 1:
