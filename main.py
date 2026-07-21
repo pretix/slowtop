@@ -27,6 +27,11 @@ try:
 except ImportError:
     print("Error: config.py not found. Please create it based on config.py.example.")
     sys.exit(1)
+try:
+    from config import CACHE_SIZE
+except ImportError:
+    # Usually results in <100 MB ram, but still a useful amount of caching in many cases
+    CACHE_SIZE = 1024
 
 locale.setlocale(locale.LC_ALL, LOCALE)
 
@@ -162,7 +167,7 @@ def send_for_analysis(query: SlowQuery | QueryGroup) -> Tuple[str, str]:
     return (url, delete_url)
 
 
-@lru_cache
+@lru_cache(maxsize=CACHE_SIZE)
 def format_sql(sql: str, inline=False) -> str:
     # Huge queries can cause pglast or textual to freeze, so we limit the size
     # of the query to 10000 characters
