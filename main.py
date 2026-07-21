@@ -43,7 +43,7 @@ class Number(rich.text.Text):
         self,
         value: float | int | None,
         justify: Literal["default", "left", "center", "right", "full"] | None = "right",
-        *kargs,
+        *args,
         **kwargs,
     ) -> None:
         self.value = value
@@ -51,7 +51,7 @@ class Number(rich.text.Text):
             value_str = "-"
         else:
             value_str = f"{round(value):n}"
-        super().__init__(value_str, justify=justify, *kargs, **kwargs)
+        super().__init__(value_str, justify=justify, *args, **kwargs)
 
 
 @dataclass(slots=True)
@@ -102,7 +102,7 @@ def osc52_copy(text: str, driver=sys.stdout) -> None:
 
 
 def run_explain_analyze(sql: str) -> str:
-    explain_sql = f"""
+    explain_sql = f"""\
 EXPLAIN (
     ANALYZE,
     VERBOSE,
@@ -664,7 +664,7 @@ class SlowQueryApp(App[None]):
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool:
         """Disable keybindings that won't work anyway."""
-        if action in ["explain", "explain_analyze", "copy_query"]:
+        if action in ["explain_analyze", "copy_query"]:
             query = self.get_selected_query()
             if query is None:
                 return False

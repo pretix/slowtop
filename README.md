@@ -2,15 +2,15 @@ slowtop - Browse and Analyse Slow PostgreSQL Queries
 ======================================================
 
 Features:
-* Read ether slow queries form log files or pg_stat_statements
-* Show overview over all queries with there duration
-* Show query scrollable, pretty printed with syntax highlighting
+* Find slow queries in log files or pg_stat_statements
+* Show overview over all queries with their duration
+* Show queries scrollable, pretty printed with syntax highlighting
 * Show queries grouped by query_id with Statistical Data
-* Send query plan to [explain.dalibo.com](https://explain.dalibo.com) or an compatible site
-* Run query to get detailed execution plan
-* Copy query to Clipboard (even works over ssh)
+* Send selected queries plan to [explain.dalibo.com](https://explain.dalibo.com) or an compatible site
+* Run queries to get detailed execution plan
+* Copy queries to Clipboard (even works over ssh)
 * Extendable with your custom fields
-* Can take screenshots
+* All the features Textual brings out of the box: keybindings, screenshots, etc.
 
 Dependencies:
 * PostgreSQL with logs in JSON-Format and/or pg_stat_statements enabled
