@@ -652,7 +652,10 @@ class SlowQueryApp(App[None]):
             self.notify(
                 "Successfully sent: " + result[0],
                 severity="information",
+                timeout=20,
             )
+            # open the url in the browser – this sadly doesn't work via ssh
+            self.open_url(result[0])
         except Exception as exc:
             self.notify(
                 f"Error: {exc}",
