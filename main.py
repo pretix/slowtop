@@ -65,11 +65,13 @@ class Number(rich.text.Text):
 @dataclass(slots=True)
 class SlowQuery:
     time: str
-    runtime_ms: float
+    vxid: Optional[str]
+    runtime_ms: Optional[float]
     ps: str
     sql: str
     plan: str
     query_id: str
+    temp_file_size: Optional[int] = None
     extra_fields: dict[str, str] = field(default_factory=dict)
 
 
@@ -82,6 +84,7 @@ class QueryGroup:
     total_runtime_ms: float
     avg_runtime_ms: float
     max_runtime_ms: float
+    temp_file_size: Optional[float]
     extra_fields: dict[str, str] = field(default_factory=dict)
 
 
@@ -91,6 +94,12 @@ COLUMNS_PLAIN = [
     {"name": "PS", "key": "ps", "justify": "left"},
     {"name": "SQL", "key": "sql", "justify": "left"},
     {"name": "QueryId", "key": "query_id", "justify": "left"},
+    {
+        "name": "Temp File Size",
+        "key": "temp_file_size",
+        "justify": "right",
+        "aggregation": "sum",
+    },
 ]
 COLUMNS_PLAIN += EXTRA_FIELDS
 COLUMNS_GROUPED = [
@@ -100,6 +109,12 @@ COLUMNS_GROUPED = [
     {"name": "Total [ms]", "key": "total_runtime", "justify": "right"},
     {"name": "QueryId", "key": "query_id", "justify": "left", "aggregation": "count"},
     {"name": "SQL", "key": "sql", "justify": "left", "aggregation": "sample"},
+    {
+        "name": "Temp File Size",
+        "key": "temp_file_size",
+        "justify": "right",
+        "aggregation": "sum",
+    },
 ] + EXTRA_FIELDS
 
 
@@ -165,6 +180,7 @@ FROM pg_stat_statements;
                 total_runtime_ms=total_exec_time,
                 avg_runtime_ms=mean_exec_time,
                 max_runtime_ms=max_exec_time,
+                temp_file_size=-1,
             )
         )
 
@@ -282,6 +298,8 @@ def aggregate(set_: set, aggregation_mode: str) -> int | str:
         return next(iter(set_), "-")
     elif aggregation_mode == "list":
         return ", ".join(sorted(set_))
+    elif aggregation_mode == "sum":
+        return sum(set_)
     else:
         raise ValueError(f"Unknown aggregation type: {aggregation_mode}")
 
@@ -301,7 +319,18 @@ def group_queries(
     result: list[QueryGroup] = []
 
     for group, items in groups.items():
-        runtimes = [q.runtime_ms for q in items]
+        runtimes = [q.runtime_ms for q in items if q.runtime_ms]
+        if runtimes:
+            total_runtime_ms = sum(runtimes)
+            avg_runtime_ms = sum(runtimes) / len(runtimes)
+            max_runtime_ms = max(runtimes)
+        else:
+            total_runtime_ms = -1
+            avg_runtime_ms = -1
+            max_runtime_ms = -1
+        total_temp_file_size = sum(
+            [q.temp_file_size for q in items if q.temp_file_size]
+        )
 
         # Aggregate fields
         extra_fields = {}
@@ -328,14 +357,70 @@ def group_queries(
                 sql=items[0].sql,
                 plan=items[0].plan,
                 count=len(items),
-                total_runtime_ms=sum(runtimes),
-                avg_runtime_ms=sum(runtimes) / len(runtimes),
-                max_runtime_ms=max(runtimes),
+                total_runtime_ms=total_runtime_ms,
+                avg_runtime_ms=avg_runtime_ms,
+                max_runtime_ms=max_runtime_ms,
+                temp_file_size=total_temp_file_size,
                 extra_fields=extra_fields,
             )
         )
 
     return result
+
+
+def parse_slow_query_line(entry: dict):
+    message = entry["message"]
+    if not message.startswith("duration: "):
+        return
+
+    runtime_ms = extract_runtime_ms(message)
+    if runtime_ms is None:
+        return
+
+    sql = extract_query(message)
+    plan = extract_plan(message)
+    extra_fields = {
+        field["key"]: extract_regex(field["regex"], sql) for field in EXTRA_FIELDS
+    }
+
+    return SlowQuery(
+        time=str(entry.get("timestamp", "")),
+        vxid=entry.get("vxid"),
+        runtime_ms=runtime_ms,
+        ps=str(entry.get("ps", "")),
+        sql=sql,
+        plan=plan,
+        query_id=str(entry.get("query_id", "-")),
+        temp_file_size=None,
+        extra_fields=extra_fields,
+    )
+
+
+def parse_tempfile_query_line(entry: dict):
+    message = entry["message"]
+    if not message.startswith("temporary file: "):
+        return
+
+    runtime_ms = None
+
+    file_size = int(message.split()[-1])
+    sql = entry["statement"]
+    plan = ""
+    extra_fields = {
+        field["key"]: extract_regex(field["regex"], sql) for field in EXTRA_FIELDS
+    }
+
+    return SlowQuery(
+        time=str(entry.get("timestamp", "")),
+        vxid=entry.get("vxid"),
+        runtime_ms=runtime_ms,
+        ps=str(entry.get("ps", "")),
+        sql=sql,
+        plan=plan,
+        query_id=str(entry.get("query_id", "-")),
+        temp_file_size=file_size,
+        extra_fields=extra_fields,
+    )
 
 
 def parse_log_file(path: Path) -> list[SlowQuery]:
@@ -351,33 +436,50 @@ def parse_log_file(path: Path) -> list[SlowQuery]:
             message = entry.get("message")
             if not isinstance(message, str):
                 continue
-            if not message.startswith("duration: "):
-                continue
 
-            runtime_ms = extract_runtime_ms(message)
-            if runtime_ms is None:
-                continue
-
-            sql = extract_query(message)
-            plan = extract_plan(message)
-            extra_fields = {
-                field["key"]: extract_regex(field["regex"], sql)
-                for field in EXTRA_FIELDS
-            }
-
-            result.append(
-                SlowQuery(
-                    time=str(entry.get("timestamp", "")),
-                    runtime_ms=runtime_ms,
-                    ps=str(entry.get("ps", "")),
-                    sql=sql,
-                    plan=plan,
-                    query_id=str(entry.get("query_id", "-")),
-                    extra_fields=extra_fields,
-                )
-            )
-
+            if message.startswith("duration: "):
+                new = parse_slow_query_line(entry)
+            elif message.startswith("temporary file"):
+                new = parse_tempfile_query_line(entry)
+            if not try_merge_queries(result[-1], new):
+                result.append(new)
     return result
+
+
+def try_merge_queries(query1: SlowQuery, query2: SlowQuery) -> bool:
+    """
+    Check if two log entries are actually from the same query.
+    This is necessary since the postgres-option `log_temp_files` will create
+    extra log entries for every temporary file that postgresql creates,
+    we want however join them with the log entry created by
+    log_min_duration_statement or log_min_duration_statement.
+    This function checks where two entries in the form of SlowQuery-Entities
+    are the same query and if so merge the second into the first.
+    Returns True if a merge was done.
+    """
+    # Not in the same transaction, therefore distinct
+    if query1.vxid != query2.vxid:
+        return False
+    # Both were entries where logged as "slow queries", therefore they are distinct
+    if query1.runtime_ms and query2.runtime_ms:
+        return False
+    # Safety check, should not happen
+    if query1.query_id != query2.query_id:
+        raise ValueError("Merging Failed")
+    # Sum up temp_file_sizes
+    total_temp_file_size = query1.temp_file_size or 0
+    total_temp_file_size += query2.temp_file_size or 0
+    if total_temp_file_size > 0:
+        query1.temp_file_size = total_temp_file_size
+    # Merge plan
+    if not query1.plan:
+        query1.plan = query2.plan
+    if query1.plan and query2.plan and query1.plan != query2.plan:
+        raise ValueError("Merging Failed")
+    # Merge runtimes
+    if query1.runtime_ms is None:
+        query1.runtime_ms = query2.runtime_ms
+    return True
 
 
 def parse_log_files(paths: list[Path]) -> list[SlowQuery]:
@@ -588,6 +690,8 @@ class SlowQueryApp(App[None]):
                     input = input.plain
                 if isinstance(input, Number):
                     input = input.value
+                if input is None:
+                    input = 0
                 return input
 
             table.sort(sort_col_key, key=natural_sort, reverse=self.sort_reverse)
@@ -745,6 +849,7 @@ class SlowQueryApp(App[None]):
                             max_length=width_sql_column,
                         )
                     ),
+                    Number(group.temp_file_size),
                     *[
                         Text(str(group.extra_fields.get(field["key"], "-")))
                         for field in EXTRA_FIELDS
@@ -774,6 +879,7 @@ class SlowQueryApp(App[None]):
                         )
                     ),
                     Text(query.query_id),
+                    Number(query.temp_file_size),
                     *[
                         Text(query.extra_fields.get(field["key"], "-"))
                         for field in EXTRA_FIELDS
