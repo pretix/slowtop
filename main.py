@@ -62,7 +62,7 @@ class Number(rich.text.Text):
         super().__init__(value_str, justify=justify, *args, **kwargs)
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, unsafe_hash=True)
 class SlowQuery:
     time: str
     runtime_ms: float
@@ -70,10 +70,10 @@ class SlowQuery:
     sql: str
     plan: str
     query_id: str
-    extra_fields: dict[str, str] = field(default_factory=dict)
+    extra_fields: dict[str, str] = field(default_factory=dict, hash=False)
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, unsafe_hash=True)
 class QueryGroup:
     query_id: str
     sql: str
@@ -82,7 +82,7 @@ class QueryGroup:
     total_runtime_ms: float
     avg_runtime_ms: float
     max_runtime_ms: float
-    extra_fields: dict[str, str] = field(default_factory=dict)
+    extra_fields: dict[str, str] = field(default_factory=dict, hash=False)
 
 
 COLUMNS_PLAIN = [
@@ -171,6 +171,7 @@ FROM pg_stat_statements;
     return query_groups
 
 
+@lru_cache(maxsize=CACHE_SIZE)
 def send_for_analysis(query: SlowQuery | QueryGroup) -> Tuple[str, str]:
     password = ""  # FIXME?
     r = requests.post(
