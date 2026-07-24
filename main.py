@@ -41,6 +41,13 @@ locale.setlocale(locale.LC_ALL, LOCALE)
 APP_NAME = "slowtop"
 VERSION = "0.1.0"
 
+# Make PG_CONNINFO compatible with both formats psycopg accepts
+# Either a connection string or key-value-pairs, here encapsulated in a dict
+if isinstance(PG_CONNINFO, str):
+    PG_CONNINFO = {"conninfo": PG_CONNINFO}
+elif not isinstance(PG_CONNINFO, dict):
+    raise ValueError("PostgreSQL connection not properly configured")
+
 
 class Text(rich.text.Text):
     pass
@@ -136,7 +143,7 @@ EXPLAIN (
 )
 {sql}
 """
-    with psycopg.connect(PG_CONNINFO) as conn:
+    with psycopg.connect(**PG_CONNINFO) as conn:
         conn.set_read_only(True)
         with conn.cursor() as cur:
             cur.execute(explain_sql)
@@ -149,7 +156,7 @@ def get_pg_stat_statements() -> list[QueryGroup]:
 SELECT query, queryid, calls, total_exec_time, mean_exec_time, max_exec_time
 FROM pg_stat_statements;
     """
-    with psycopg.connect(PG_CONNINFO) as conn:
+    with psycopg.connect(**PG_CONNINFO) as conn:
         conn.set_read_only(True)
         with conn.cursor() as cur:
             cur.execute(sql)
