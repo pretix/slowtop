@@ -812,7 +812,7 @@ def main() -> None:
     )
     parser.add_argument(
         "-s",
-        "--stat_statements",
+        "--stat-statements",
         action="store_true",
         help="Load queries from pg_stat_statements instead of logfiles",
     )
