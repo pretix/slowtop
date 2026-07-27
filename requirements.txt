@@ -1,4 +1,0 @@
-textual[syntax]
-psycopg
-pglast
-requests

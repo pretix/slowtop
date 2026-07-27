@@ -1,0 +1,48 @@
+[project]
+name = "slowtop"
+dynamic = ["version"] # version wird aus source code gelesen
+description = "Browse and Analyse Slow PostgreSQL Queries"
+readme = "README.md"
+license = "GPL-3.0"
+license-files = ["LICENSE"]
+
+authors = [
+    {name = "Michael Schönitzer", email = "schoenitzer@pretix.eu"}
+]
+
+keywords = ["database", "postgres", "postgresql", "profiling", "analysis"]
+
+classifiers = [
+    "Development Status :: 4 - Beta",
+   #"Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Natural Language :: English",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Topic :: Database :: Front-Ends",
+    "Topic :: System :: Systems Administration",
+]
+
+requires-python = ">=3.13"
+
+dependencies = [
+    "pglast",
+    "psycopg",
+    "requests",
+    "textual[syntax]",
+]
+
+[project.scripts]
+slowtop = "slowtop:main"
+
+[project.urls]
+Homepage = "https://github.com/pretix/slowtop"
+Repository = "https://github.com/pretix/slowtop"
+Issues = "https://github.com/pretix/slowtop/issues"
+
+[build-system]
+requires = ["hatchling >= 1.17"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "slowtop.py" # looks for __version__/VERSION
