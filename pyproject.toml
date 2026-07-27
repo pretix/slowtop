@@ -46,3 +46,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.version]
 path = "slowtop.py" # looks for __version__/VERSION
+
+[tool.hatch.build.targets.wheel.force-include]
+"slowtop.cfg.example" = "/slowtop.cfg.example"
+
+[tool.hatch.build.targets.sdist.force-include]
+"slowtop.cfg.example" = "/slowtop.cfg.example"
