@@ -29,6 +29,10 @@ from textual.widgets.data_table import ColumnKey
 APP_NAME = "slowtop"
 VERSION = "0.1.0"
 
+# example config file
+CONFIG_EXAMPLE = Path(__file__).parent / 'slowtop.cfg.example'
+CONFIG_EXAMPLE = CONFIG_EXAMPLE if CONFIG_EXAMPLE.exists() else Path('slowtop.cfg.example')
+
 # via config file
 API_URL: str
 EXTRA_FIELDS: list[dict[str, str]]
@@ -802,7 +806,8 @@ def main() -> None:
         type=Path,
         default=Path("~/.config/slowtop.cfg").expanduser(),
         help="Path to slowtop config file"
-        + " (default: ~/.config/slowtop.cfg)"
+        + " (default: ~/.config/slowtop.cfg;"
+        + f" see {CONFIG_EXAMPLE})"
     )
     parser.add_argument(
         "-g",
@@ -840,10 +845,10 @@ def main() -> None:
         LOG_DIR = Path(config['LOG_DIR'])
         PG_CONNINFO = config['PG_CONNINFO']
     except FileNotFoundError:
-         print(f"Error: config file {args.config_file} not found. Please create it based on slowtop.toml.example.")
+         print(f"Error: config file {args.config_file} not found. Please create it based on {CONFIG_EXAMPLE}.")
          sys.exit(1)
     except KeyError as ex:
-         print(f"Error: config parameter not found ({ex}) Please create it based on slowtop.toml.example.")
+         print(f"Error: config parameter not found ({ex}) Please create it based on {CONFIG_EXAMPLE}.")
          sys.exit(2)
 
     locale.setlocale(locale.LC_ALL, LOCALE)
