@@ -7,6 +7,7 @@ import json
 import locale
 import re
 import sys
+import tomllib
 from collections import defaultdict
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -25,28 +26,21 @@ from textual.widgets import (Button, Checkbox, DataTable, Footer, Header,
                              TextArea)
 from textual.widgets.data_table import ColumnKey
 
-try:
-    from config import API_URL, EXTRA_FIELDS, LOCALE, LOG_DIR, PG_CONNINFO
-except ImportError:
-    print("Error: config.py not found. Please create it based on config.py.example.")
-    sys.exit(1)
-try:
-    from config import CACHE_SIZE
-except ImportError:
-    # Usually results in <100 MB ram, but still a useful amount of caching in many cases
-    CACHE_SIZE = 1024
-
-locale.setlocale(locale.LC_ALL, LOCALE)
-
 APP_NAME = "slowtop"
 VERSION = "0.1.0"
 
-# Make PG_CONNINFO compatible with both formats psycopg accepts
-# Either a connection string or key-value-pairs, here encapsulated in a dict
-if isinstance(PG_CONNINFO, str):
-    PG_CONNINFO = {"conninfo": PG_CONNINFO}
-elif not isinstance(PG_CONNINFO, dict):
-    raise ValueError("PostgreSQL connection not properly configured")
+# example config file
+CONFIG_EXAMPLE = Path(__file__).parent / 'slowtop.cfg.example'
+CONFIG_EXAMPLE = CONFIG_EXAMPLE if CONFIG_EXAMPLE.exists() else Path('slowtop.cfg.example')
+
+# via config file
+API_URL: str
+EXTRA_FIELDS: list[dict[str, str]]
+LOCALE: str
+LOG_DIR: Path
+PG_CONNINFO: str|dict[str, str]
+COLUMNS_PLAIN: list[dict[str,str]]
+COLUMNS_GROUPED: list[dict[str,str]]
 
 
 class Text(rich.text.Text):
@@ -90,24 +84,6 @@ class QueryGroup:
     avg_runtime_ms: float
     max_runtime_ms: float
     extra_fields: dict[str, str] = field(default_factory=dict, hash=False)
-
-
-COLUMNS_PLAIN = [
-    {"name": "Time", "key": "time", "justify": "left"},
-    {"name": "Runtime [ms]", "key": "runtime", "justify": "right"},
-    {"name": "PS", "key": "ps", "justify": "left"},
-    {"name": "SQL", "key": "sql", "justify": "left"},
-    {"name": "QueryId", "key": "query_id", "justify": "left"},
-]
-COLUMNS_PLAIN += EXTRA_FIELDS
-COLUMNS_GROUPED = [
-    {"name": "Count", "key": "count", "justify": "right"},
-    {"name": "Avg [ms]", "key": "avg_runtime", "justify": "right"},
-    {"name": "Max [ms]", "key": "max_runtime", "justify": "right"},
-    {"name": "Total [ms]", "key": "total_runtime", "justify": "right"},
-    {"name": "QueryId", "key": "query_id", "justify": "left", "aggregation": "count"},
-    {"name": "SQL", "key": "sql", "justify": "left", "aggregation": "sample"},
-] + EXTRA_FIELDS
 
 
 def osc52_copy(text: str, driver=sys.stdout) -> None:
@@ -178,7 +154,7 @@ FROM pg_stat_statements;
     return query_groups
 
 
-@lru_cache(maxsize=CACHE_SIZE)
+@lru_cache(maxsize=1024)
 def send_for_analysis(query: SlowQuery | QueryGroup) -> Tuple[str, str]:
     password = ""  # FIXME?
     r = requests.post(
@@ -193,7 +169,7 @@ def send_for_analysis(query: SlowQuery | QueryGroup) -> Tuple[str, str]:
     return (url, delete_url)
 
 
-@lru_cache(maxsize=CACHE_SIZE)
+@lru_cache(maxsize=1024)
 def format_sql(sql: str, inline=False) -> str:
     # Huge queries can cause pglast or textual to freeze, so we limit the size
     # of the query to 10000 characters
@@ -369,7 +345,7 @@ def parse_log_file(path: Path) -> list[SlowQuery]:
             sql = extract_query(message)
             plan = extract_plan(message)
             extra_fields = {
-                field["key"]: extract_regex(field["regex"], sql)
+                field["key"]: extract_regex(re.compile(field["regex"]), sql)
                 for field in EXTRA_FIELDS
             }
 
@@ -825,6 +801,15 @@ def main() -> None:
     )
 
     parser.add_argument(
+        "-c",
+        "--config-file",
+        type=Path,
+        default=Path("~/.config/slowtop.cfg").expanduser(),
+        help="Path to slowtop config file"
+        + " (default: ~/.config/slowtop.cfg;"
+        + f" see {CONFIG_EXAMPLE})"
+    )
+    parser.add_argument(
         "-g",
         "--grouped",
         action="store_true",
@@ -832,7 +817,7 @@ def main() -> None:
     )
     parser.add_argument(
         "-s",
-        "--stat_statements",
+        "--stat-statements",
         action="store_true",
         help="Load queries from pg_stat_statements instead of logfiles",
     )
@@ -851,6 +836,46 @@ def main() -> None:
     )
 
     args = parser.parse_args()
+
+    try:
+        config = tomllib.loads(args.config_file.read_text())
+        API_URL = config['API_URL']
+        EXTRA_FIELDS = config.get('EXTRA_FIELDS', [])
+        LOCALE = config['LOCALE']
+        LOG_DIR = Path(config['LOG_DIR'])
+        PG_CONNINFO = config['PG_CONNINFO']
+    except FileNotFoundError:
+         print(f"Error: config file {args.config_file} not found. Please create it based on {CONFIG_EXAMPLE}.")
+         sys.exit(1)
+    except KeyError as ex:
+         print(f"Error: config parameter not found ({ex}) Please create it based on {CONFIG_EXAMPLE}.")
+         sys.exit(2)
+
+    locale.setlocale(locale.LC_ALL, LOCALE)
+
+    # Make PG_CONNINFO compatible with both formats psycopg accepts either
+    # a connection string or key-value-pairs, here encapsulated in a dict
+    if isinstance(PG_CONNINFO, str):
+        PG_CONNINFO = {"conninfo": PG_CONNINFO}
+    elif not isinstance(PG_CONNINFO, dict):
+        raise ValueError("PostgreSQL connection not properly configured")
+
+    COLUMNS_PLAIN = [
+        {"name": "Time", "key": "time", "justify": "left"},
+        {"name": "Runtime [ms]", "key": "runtime", "justify": "right"},
+        {"name": "PS", "key": "ps", "justify": "left"},
+        {"name": "SQL", "key": "sql", "justify": "left"},
+        {"name": "QueryId", "key": "query_id", "justify": "left"},
+    ]
+    COLUMNS_PLAIN += EXTRA_FIELDS
+    COLUMNS_GROUPED = [
+        {"name": "Count", "key": "count", "justify": "right"},
+        {"name": "Avg [ms]", "key": "avg_runtime", "justify": "right"},
+        {"name": "Max [ms]", "key": "max_runtime", "justify": "right"},
+        {"name": "Total [ms]", "key": "total_runtime", "justify": "right"},
+        {"name": "QueryId", "key": "query_id", "justify": "left", "aggregation": "count"},
+        {"name": "SQL", "key": "sql", "justify": "left", "aggregation": "sample"},
+    ] + EXTRA_FIELDS
 
     if args.stat_statements and args.logfiles:
         parser.error("Cannot use --stat_statements and logfiles together")

@@ -1,0 +1,31 @@
+# Slowtop config file example
+# TOML 1.0; see https://toml.io/en/v1.0.0
+
+# URL for the Explain API, musst be compatible with PEV2
+API_URL = "https://explain.dalibo.com"
+
+# Path to the directory where PostgreSQL log files are stored.
+LOG_DIR = "/var/log/postgresql"
+
+authors = [
+    {name = "Michael Schönitzer", email = "schoenitzer@pretix.eu"}
+]
+
+# Database connection string for PostgreSQL. This should be a string in the format:
+PG_CONNINFO = "host=localhost dbname=mydb user=myuser password=mypass"
+
+# Locale to use for formatting numbers and dates.
+# This should be a string like "en_US.UTF-8" or "fr_FR.UTF-8".
+# Leave empty to use the system locale
+LOCALE = ""
+
+# OPTIONAL: Define custom fields to extract from the queries
+# see https://toml.io/en/v1.0.0#array-of-tables
+#[[EXTRA_FIELDS]]
+#name = "Customer"
+#key = "customer"
+#justify = "left"
+#regex = '(?i)\bcustomer_id\"?\s*=\s*(\d+)' # Python regular expression
+#aggregation = "count"  # Can be one of "count", "sample" or "list"
+
+# vi: filetype=toml
