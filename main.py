@@ -556,8 +556,8 @@ class SlowQueryApp(App[None]):
         self,
         event: DataTable.RowHighlighted,
     ) -> None:
-        if event.row_key.value is None:
-            raise ValueError("Row key invalid")
+        if event.row_key is None or event.row_key.value is None:
+            return
         try:
             self.selected_row = int(event.row_key.value)
         except ValueError:
