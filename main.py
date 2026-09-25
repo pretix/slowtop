@@ -220,6 +220,9 @@ def format_sql(sql: str, inline=False) -> str:
             return pretty
     except pglast.Error:
         return sql
+    except Exception:
+        # If anything goes wrong, we just return the original SQL
+        return sql
 
 
 def shorten_str(text: str, max_length: int = 80) -> str:
@@ -243,18 +246,31 @@ def extract_runtime_ms(message: str) -> float | None:
 
 
 def extract_query(message: str) -> str:
+    if message == "":
+        return ""
     lines = message.splitlines()
-    if len(lines) < 2:
-        return ""
-    if not lines[1].startswith("Query Text: "):
-        return ""
-    sql = lines[1].replace("Query Text: ", "").strip()
-    return sql
+    # Option 1: loged by log_min_duration_statement without plan
+    # Example:
+    # duration: 123.456 ms  statement: SELECT * FROM my_table
+    # WHERE id = 1;
+    if lines[0].startswith("duration: ") and " statement: " in lines[0]:
+        split = re.split(r" statement: ", message, maxsplit=1)
+        if len(split) == 2:
+            return "\n".join([split[1].strip(), *lines[2:]])
+    # Option 2: logged by auto_explain with plan
+    # Example:
+    # duration: 123.456 ms  plan:
+    # Query Text: SELECT * FROM my_table;
+    # [plan details...]
+    if len(lines) > 1 and lines[1].startswith("Query Text: "):
+        sql = lines[1].replace("Query Text: ", "").strip()
+        return sql
+    return ""
 
 
 def extract_plan(message: str) -> str:
     lines = message.splitlines()
-    if len(lines) < 2:
+    if len(lines) < 2 or " plan: " not in lines[0]:
         return ""
     sql = "\n".join(lines[2:]).strip()
     return sql
